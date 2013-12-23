@@ -49,7 +49,7 @@
                              JFreeChart
                              LegendItem
                              LegendItemCollection)
-            (org.jfree.chart.axis AxisSpace NumberAxis AxisLocation LogAxis)
+            (org.jfree.chart.axis AxisSpace NumberAxis AxisLocation LogAxis DateAxis)
             (org.jfree.chart.plot PlotOrientation
                                   DatasetRenderingOrder
                                   SeriesRenderingOrder
@@ -58,13 +58,16 @@
             (org.jfree.data.xy DefaultHighLowDataset
                                XYSeries
                                XYSeriesCollection
-                               AbstractXYDataset)
+                               AbstractXYDataset
+                               DefaultTableXYDataset)
             (org.jfree.data.category DefaultCategoryDataset)
             (org.jfree.data.general DefaultPieDataset)
             (org.jfree.chart.renderer.xy XYLineAndShapeRenderer
                                          XYBarRenderer
                                          XYSplineRenderer
-                                         StandardXYBarPainter)
+                                         StandardXYBarPainter
+                                         XYAreaRenderer
+                                         StackedXYAreaRenderer)
             (org.jfree.ui TextAnchor RectangleInsets RectangleEdge)
             (org.jfree.chart.title TextTitle)
             (org.jfree.chart.annotations XYPointerAnnotation
@@ -549,6 +552,31 @@
         (.setDatasetRenderingOrder org.jfree.chart.plot.DatasetRenderingOrder/FORWARD)
         (.setDataset n data-set)
         (.setRenderer n line-renderer))
+      chart)))
+
+(defmethod add-lines* org.jfree.data.xy.DefaultTableXYDataset
+  ([chart x y & options]
+     (let [opts (when options (apply assoc {} options))
+           data (or (:data opts) $data)
+           _x (data-as-list x data)
+           _y (data-as-list y data)
+           data-plot (.getPlot chart)
+           n (.getDatasetCount data-plot)
+           series-lab (or (:series-label opts) (format "%s, %s" 'x 'y))
+           data-series (XYSeries. series-lab (:auto-sort opts true) false)
+           points? (true? (:points opts))
+           data-set (.getDataset data-plot)]
+       (dorun
+        (map (fn [x y]
+               (if (and (not (nil? x))
+                        (not (nil? y)))
+                 (do (println x "->" y)
+                     (.add data-series (double x) (double y)))))
+             _x _y))
+      (.addSeries data-set data-series)
+      (doto data-plot
+        (.setSeriesRenderingOrder org.jfree.chart.plot.SeriesRenderingOrder/FORWARD)
+        (.setDatasetRenderingOrder org.jfree.chart.plot.DatasetRenderingOrder/FORWARD))
       chart)))
 
 ;; doesn't work
@@ -1048,6 +1076,18 @@
     tooltips?
     urls?))
 
+(defn- create-stacked-xy-plot
+  [title x-lab y-lab dataset legend? tooltips? urls?]
+  (org.jfree.chart.ChartFactory/createStackedXYAreaChart
+    title
+    x-lab
+    y-lab
+    dataset
+    org.jfree.chart.plot.PlotOrientation/VERTICAL
+    legend?
+    tooltips?
+    urls?))
+
 (defn- create-time-series-plot
   [title x-lab y-lab dataset legend? tooltips? urls?]
   (org.jfree.chart.ChartFactory/createTimeSeriesChart
@@ -1122,6 +1162,74 @@
                                                (format "%s, %s (%s)" 'x 'y i))
                              :points points?)))]
       (.setRenderer (.getPlot chart) 0 (XYLineAndShapeRenderer. true points?))
+      (set-theme chart theme)
+      chart)))
+
+(defn- create-stacked-xy-series-plot
+  ([x y create-plot & options]
+    (let [opts (when options (apply assoc {} options))
+          data (or (:data opts) $data)
+          _x (data-as-list x data)
+          _y (data-as-list y data)
+          _group-by (when (:group-by opts)
+                      (data-as-list (:group-by opts) data))
+          x-groups (when _group-by
+                     (map #($ :col-0 %)
+                          (vals ($group-by :col-1 (conj-cols _x _group-by)))))
+          y-groups (when _group-by
+                     (map #($ :col-0 %)
+                          (vals ($group-by :col-1 (conj-cols _y _group-by)))))
+          __x (in-coll (if x-groups (first x-groups) _x))
+          __y (in-coll (if y-groups (first y-groups) _y))
+          title (or (:title opts) "")
+          x-lab (or (:x-label opts) (str 'x))
+          y-lab (or (:y-label opts) (str 'y))
+          series-lab (or (:series-label opts)
+                          (if x-groups
+                            (format "%s, %s (0)" 'x 'y)
+                            (format "%s, %s" 'x 'y)))
+          theme (or (:theme opts) :default)
+          legend? (true? (:legend opts))
+          points? (true? (:points opts))
+          data-series (XYSeries. (cond
+                                   _group-by
+                                     (first _group-by)
+                                   :else
+                                     series-lab)
+                                 (:auto-sort opts true)
+                                 false)
+          dataset (doto (DefaultTableXYDataset.))
+          chart (do
+                  (dorun
+                   (map (fn [x y]
+                        (if (and (not (nil? x))
+                                 (not (nil? y)))
+                          (do
+                            (println x " -> " y)
+                            (.add data-series (double x) (double y)))))
+                        __x __y))
+                  (.addSeries dataset data-series)
+                  (create-plot
+                   title
+                   x-lab
+                   y-lab
+                   dataset
+                   legend?
+                   true  ; tooltips
+                   false))
+           _ (when x-groups
+                (doseq [i (range 1 (count x-groups))]
+                  (add-lines chart (nth x-groups i)
+                             (nth y-groups i)
+                             :series-label (cond
+                                             _group-by
+                                               (nth _group-by i)
+                                             series-lab
+                                               series-lab
+                                             :else
+                                               (format "%s, %s (%s)" 'x 'y i))
+                             :points points?)))]
+      (.setRenderer (.getPlot chart) 0 (StackedXYAreaRenderer.))
       (set-theme chart theme)
       chart)))
 
@@ -1289,6 +1397,13 @@
 (defn time-series-plot* [x y & options]
   (apply create-xy-series-plot x y create-time-series-plot options))
 
+(defn stacked-time-series-plot* [x y & options]
+  (let [c (apply create-stacked-xy-series-plot x y create-stacked-xy-plot options)
+        p (.getPlot c)
+        x-axis (.getDomainAxis p)]
+    (.setDomainAxis p (DateAxis. (.getLabel x-axis)))
+    c))
+
 (defmacro time-series-plot
 " Returns a JFreeChart object representing a time series plot of the given data.
   Use the 'view' function to display the chart, or the 'save' function
@@ -1305,6 +1420,7 @@
     :legend (default false) prints legend
     :series-label (default x expression)
     :group-by (default nil) -- a vector of values used to group the x and y values into series.
+    :stacked (default false) stack the series
 
   See also:
     view, save, add-points, add-lines
@@ -1343,7 +1459,9 @@
                                                             :x-label x-lab#
                                                             :y-label y-lab#
                                                             :series-label series-lab#]))))]
-        (apply time-series-plot* args#))))
+       (if (:stacked opts#)
+         (apply stacked-time-series-plot* args#)
+         (apply time-series-plot* args#)))))
 
 
 (defn scatter-plot*
