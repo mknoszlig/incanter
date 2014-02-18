@@ -570,8 +570,7 @@
         (map (fn [x y]
                (if (and (not (nil? x))
                         (not (nil? y)))
-                 (do (println x "->" y)
-                     (.add data-series (double x) (double y)))))
+                 (.add data-series (double x) (double y))))
              _x _y))
       (.addSeries data-set data-series)
       (doto data-plot
@@ -1204,9 +1203,7 @@
                    (map (fn [x y]
                         (if (and (not (nil? x))
                                  (not (nil? y)))
-                          (do
-                            (println x " -> " y)
-                            (.add data-series (double x) (double y)))))
+                          (.add data-series (double x) (double y))))
                         __x __y))
                   (.addSeries dataset data-series)
                   (create-plot
